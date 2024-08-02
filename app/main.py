@@ -8,9 +8,10 @@ app = FastAPI()
 origins = [
     "http://localhost",
     "http://localhost:8000",
-    "http://localhost:5173",
     "http://127.0.0.1",
-    "http://127.0.0.1:8000"
+    "http://127.0.0.1:8000",
+    "http://localhost:5173",  # Add this to match your development server's address
+    "https://platemod.azurewebsites.net"  # Add your Azure Web App URL
 ]
 
 app.add_middleware(
