@@ -11,7 +11,8 @@ origins = [
     "http://127.0.0.1",
     "http://127.0.0.1:8000",
     "http://localhost:5173",  # Add this to match your development server's address
-    "https://platemod.azurewebsites.net"  # Add your Azure Web App URL
+    "https://platemod.azurewebsites.net",
+     "https://thankful-smoke-0d03fdb1e.5.azurestaticapps.net"  # Add your Azure Web App URL
 ]
 
 app.add_middleware(
