@@ -1,6 +1,8 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from openai import OpenAI
+from .training import system_instructions
+
 import os
 import json
 
@@ -10,15 +12,15 @@ assistant = client.beta.assistants.retrieve("asst_urLwyiLLsPp1QPSMxjBY4UAE")
 
 router = APIRouter()
 
-class Tag(BaseModel):
-    tag: str
-    summary: str
-    confidence: int
+class PartResult(BaseModel):
+    part: str
+    tags: list[str]
+    reason: str
+    confidence_rating: int
 
 class PlateResult(BaseModel):
     plate: str
-    tags: list[str]
-    reason: str
+    parts: list[PartResult]
 
 class CheckResponse(BaseModel):
     data: list[PlateResult]
@@ -26,7 +28,52 @@ class CheckResponse(BaseModel):
 class PlateModRequest(BaseModel):
     plates: list
 
-async def get_chatgpt_response(plates: list) -> list[PlateResult]:
+
+async def get_chatgpt_response(plates: list[str]) -> list[PlateResult]:
+    # Prepare the content for the chat completion request
+    content = {
+        "plates": plates
+    }
+    messages = [
+        {"role": "system", "content": system_instructions},
+        {"role": "user", "content": json.dumps(content)}
+    ]
+
+    response = client.chat.completions.create(
+        model="gpt-4",
+        messages=messages,
+        temperature=0.2,
+        max_tokens=4095,
+        top_p=0.4,
+        frequency_penalty=0,
+        presence_penalty=0
+    )
+        
+    if response.choices:
+        last_message_content = response.choices[0].message.content
+        try:
+            response_json = json.loads(last_message_content)
+
+            # Ensure the tags are parsed correctly
+            results = []
+            for result in response_json["data"]:
+                parts = []
+                for part in result["parts"]:
+                    part_name = part.get("part", "")
+                    tags = part.get("tags", [])
+                    reason = part.get("reason", "")
+                    rating = part.get("confidence_rating", 0)
+                    print(part_name, tags, reason, rating)
+                    parts.append(PartResult(part=part_name, tags=tags, reason=reason, confidence_rating=rating))
+                results.append(PlateResult(plate=result["plate"], parts=parts))
+            return results
+        except (json.JSONDecodeError, KeyError, TypeError) as e:
+            print(f"Error parsing response: {e}")
+            raise HTTPException(status_code=500, detail="Failed to decode JSON response from ChatGPT")
+    else:
+        raise HTTPException(status_code=500, detail="No response from ChatGPT")
+
+async def get_assistant_response(plates: list) -> list[PlateResult]:
 
     thread = client.beta.threads.create()
 
@@ -41,7 +88,7 @@ async def get_chatgpt_response(plates: list) -> list[PlateResult]:
     run = client.beta.threads.runs.create_and_poll(
         thread_id=thread.id,
         assistant_id=assistant.id,
-        instructions=assistant.instructions + " Always reverse the content to check the inverse content. Ensure the score is added to the response. Ensure reverse-content check is performed. Respond in JSON format with fields: plate, tags, reason."
+        instructions=system_instructions
     )
 
     if run.status == 'completed':
@@ -51,15 +98,22 @@ async def get_chatgpt_response(plates: list) -> list[PlateResult]:
 
         try:
             response_json = json.loads(last_message_content)
-            print(f"Response JSON: {response_json}")  # Add debugging print statement
+            print(response_json["data"])
 
             # Ensure the tags are parsed correctly
             results = []
             for result in response_json["data"]:
-                tags = result["tags"]
-                reason = result.get("reason", "")
-                results.append(PlateResult(plate=result["plate"], tags=tags, reason=reason))
+                parts = []
+                for part in result["parts"]:
+                    part_name = part.get("part", "")
+                    tags = part.get("tags", [])
+                    reason = part.get("reason", "")
+                    rating = part.get("confidence_rating", 0)
+                    print(part_name, tags, reason, rating)
+                    parts.append(PartResult(part=part_name, tags=tags, reason=reason, confidence_rating=rating))
+                results.append(PlateResult(plate=result["plate"], parts=parts))
             return results
+        
         except (json.JSONDecodeError, KeyError, TypeError) as e:
             print(f"Error parsing response: {e}")
             raise HTTPException(status_code=500, detail="Failed to decode JSON response from ChatGPT")
