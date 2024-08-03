@@ -63,7 +63,6 @@ async def get_chatgpt_response(plates: list[str]) -> list[PlateResult]:
                     tags = part.get("tags", [])
                     reason = part.get("reason", "")
                     rating = part.get("confidence_rating", 0)
-                    print(part_name, tags, reason, rating)
                     parts.append(PartResult(part=part_name, tags=tags, reason=reason, confidence_rating=rating))
                 results.append(PlateResult(plate=result["plate"], parts=parts))
             return results
