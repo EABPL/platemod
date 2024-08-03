@@ -1,10 +1,21 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 from openai import OpenAI
 from .training import system_instructions
 
-import os
+from sqlalchemy.orm import Session
+from app.db.session import SessionLocal
+from app.db.models import Plate, Part, Tag
+
 import json
+
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
 
 client = OpenAI()
 
@@ -29,7 +40,16 @@ class PlateModRequest(BaseModel):
     plates: list
 
 
-async def get_chatgpt_response(plates: list[str]) -> list[PlateResult]:
+async def get_chatgpt_response(plates: list[str], db: Session) -> list[PlateResult]:
+
+    for plate_number in plates:
+        db_plate = db.query(Plate).filter(Plate.plate_number == plate_number).first()
+        if not db_plate:
+            db_plate = Plate(plate_number=plate_number, is_flagged=True)
+            db.add(db_plate)
+            db.commit()
+            db.refresh(db_plate)
+
     # Prepare the content for the chat completion request
     content = {
         "plates": plates
@@ -63,6 +83,31 @@ async def get_chatgpt_response(plates: list[str]) -> list[PlateResult]:
                     tags = part.get("tags", [])
                     reason = part.get("reason", "")
                     rating = part.get("confidence_rating", 0)
+
+                    # Add parts to the database
+                    db_part = Part(
+                        plate_number=result["plate"],
+                        part=part_name,
+                        reason=reason,
+                        confidence_rating=rating
+                    )
+                    db.add(db_part)
+                    db.commit()
+                    db.refresh(db_part)
+
+                    for tag in tags:
+                        print(tag)
+                        db_tag = db.query(Tag).filter(Tag.tag == tag).first()
+                        if not db_tag:
+                            db_tag = Tag(tag=tag)
+                            db.add(db_tag)
+                            db.commit()
+                            db.refresh(db_tag)
+                    
+                        db_part.tags.append(db_tag)
+                        db.commit()
+                        db.refresh(db_part)
+
                     parts.append(PartResult(part=part_name, tags=tags, reason=reason, confidence_rating=rating))
                 results.append(PlateResult(plate=result["plate"], parts=parts))
             return results
@@ -120,6 +165,6 @@ async def get_assistant_response(plates: list) -> list[PlateResult]:
         raise HTTPException(status_code=500, detail=f"Run status: {run.status}")
 
 @router.post("/check", response_model=CheckResponse)
-async def check_content(request: PlateModRequest):
-    response = await get_chatgpt_response(request.plates)
+async def check_content(request: PlateModRequest, db: Session = Depends(get_db)):
+    response = await get_chatgpt_response(request.plates, db)
     return CheckResponse(data=response)
